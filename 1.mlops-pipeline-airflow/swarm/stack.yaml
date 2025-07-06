@@ -1,0 +1,164 @@
+version: '3.8'
+
+x-airflow-common:
+  &airflow-common
+  image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:2.10.3}
+  environment:
+    &airflow-common-env
+    AIRFLOW__CORE__PARALLELISM: 64
+    AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG: 32
+    AIRFLOW__SCHEDULER__PARSING_PROCESSES: 4
+    AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+    AIRFLOW__CELERY__WORKER_CONCURRENCY: 8
+    # AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres/airflow
+    AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
+    # AIRFLOW__CORE__FERNET_KEY: ${FERNET_KEY}
+    # AIRFLOW__WEBSERVER__SECRET_KEY: ${SECRET_KEY}
+    AIRFLOW__CORE__FERNET_KEY: /run/secrets/fernet_key
+    AIRFLOW__WEBSERVER__SECRET_KEY: /run/secrets/secret_key
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__CORE__DEFAULT_TIMEZONE: 'Asia/Seoul'
+    AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
+    # yamllint disable rule:line-length
+    # Use simple http server on scheduler for health checks
+    # See https://airflow.apache.org/docs/apache-airflow/stable/administration-and-deployment/logging-monitoring/check-health.html#scheduler-health-check-server
+    # yamllint enable rule:line-length
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
+    # WARNING: Use _PIP_ADDITIONAL_REQUIREMENTS option ONLY for a quick checks
+    # for other purpose (development, test and especially production usage) build/extend Airflow image.
+    _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-}
+    # The following line can be used to set a custom config file, stored in the local config folder
+    # If you want to use it, outcomment it and replace airflow.cfg with the name of your config file
+    # AIRFLOW_CONFIG: '/opt/airflow/config/airflow.cfg'
+  user: "${AIRFLOW_UID:-50000}:0"
+
+services:
+
+  postgres:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    ports:
+      - 5432:5432
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    deploy:
+      placement:
+        constraints: [node.role == manager]
+
+  redis:
+    image: redis:latest
+    ports:
+      - 6379:6379
+    deploy:
+      placement:
+        constraints: [node.role == manager]
+
+  airflow-webserver:
+    <<: *airflow-common
+    depends_on:
+      - postgres
+      - redis
+      - airflow-init
+    ports:
+      - "8080:8080"
+    volumes:
+      - dag_volume:/opt/airflow/dags
+      # - log_volume:/opt/airflow/logs
+      - dataset_volume:/opt/airflow/mnt
+    command: webserver
+    deploy:
+      placement:
+        constraints: [node.role == manager]
+
+  airflow-scheduler:
+    <<: *airflow-common
+    depends_on:
+      - airflow-webserver
+      - airflow-init
+    environment:
+      <<: *airflow-common-env
+    volumes:
+      - dag_volume:/opt/airflow/dags
+      # - log_volume:/opt/airflow/logs
+      - dataset_volume:/opt/airflow/mnt
+    command: scheduler
+    deploy:
+      placement:
+        constraints: [node.role == manager]
+
+  airflow-worker:
+    <<: *airflow-common
+    environment:
+      <<: *airflow-common-env
+      NVIDIA_VISIBLE_DEVICES: 'all'
+    volumes:
+      - dag_volume:/opt/airflow/dags
+      # - log_volume:/opt/airflow/logs
+      - dataset_volume:/opt/airflow/mnt
+    command: celery worker
+    deploy:
+      replicas: 3
+
+  airflow-init:
+    <<: *airflow-common
+    depends_on:
+      - postgres
+      - redis
+    entrypoint: /bin/bash
+    # yamllint disable rule:line-length
+    command:
+      - -c
+      - |
+        if [[ -z "${AIRFLOW_UID}" ]]; then
+          echo
+          echo -e "\033[1;33mWARNING!!!: AIRFLOW_UID not set!\e[0m"
+          echo "If you are on Linux, you SHOULD follow the instructions below to set "
+          echo "AIRFLOW_UID environment variable, otherwise files will be owned by root."
+          echo "For other operating systems you can get rid of the warning with manually created .env file:"
+          echo "    See: https://airflow.apache.org/docs/apache-airflow/stable/howto/docker-compose/index.html#setting-the-right-airflow-user"
+          echo
+        fi
+        exec /entrypoint airflow version
+    # yamllint enable rule:line-length
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_MIGRATE: 'true'
+      _AIRFLOW_WWW_USER_CREATE: 'true'
+      _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow}
+      _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
+    deploy:
+      restart_policy:
+        condition: none
+
+secrets:
+ fernet_key:
+   external: true
+ secret_key:
+   external: true
+
+volumes:
+  postgres_data:
+  dag_volume:
+    driver: local
+    driver_opts:
+      type: "nfs"
+      o: "addr=localhost,nolock,soft,rw"
+      device: ":/data/airflow_shared/dags"
+  log_volume:
+    driver: local
+    driver_opts:
+      type: "nfs"
+      o: "addr=localhost,nolock,soft,rw"
+      device: ":/data/airflow_shared/logs"
+  dataset_volume:
+    driver: local
+    driver_opts:
+      type: "nfs"
+      o: "addr=localhost,nolock,soft,rw"
+      device: ":/data/airflow_shared/mnt"
