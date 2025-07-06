@@ -24,5 +24,5 @@ Python, FastAPI, Docker, Apache Airflow, PyTorch, GitLab CI/CD, Vision AI (CNN, 
 3. 정보시스템 수석감리원
 
 ## 🔗 연계 문서
-- Notion 포트폴리오: [링크]
+- Notion 포트폴리오: [https://www.notion.so/End-to-End-AI-228b1b0820d180918a54f03e0ab13210?source=copy_link]
 - 이력서 PDF: [링크 (선택)]
