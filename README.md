@@ -25,4 +25,4 @@ Python, FastAPI, Docker, Apache Airflow, PyTorch, GitLab CI/CD, Vision AI (CNN, 
 
 ## 🔗 연계 문서
 - Notion 포트폴리오: [https://www.notion.so/End-to-End-AI-228b1b0820d180918a54f03e0ab13210?source=copy_link]
-- 이력서 PDF: [링크 (선택)]
+- 이력서 PDF: [https://github.com/BONITA-KWKim/end-to-end-ai-portfolio/blob/main/resume.pdf]
